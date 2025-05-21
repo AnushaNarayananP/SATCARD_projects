@@ -93,8 +93,7 @@ class AnnotationTool:
         self.selected_target_folder=None
         self.undo_file = os.path.join(os.path.dirname(__file__), "undo_stack.json")
         self.redo_file = os.path.join(os.path.dirname(__file__), "redo_stack.json")
-        self.undo_stack = self.load_stack(self.undo_file)
-        self.redo_stack = self.load_stack(self.redo_file)
+        
 
         self.last_crop = ""
         self.last_category = ""
@@ -125,6 +124,8 @@ class AnnotationTool:
             'weed': set(['Broad leaf', 'Narrow leaf', 'Other']),
             'others': set(['Other'])
         }
+        self.categories = ['healthy', 'pest', 'disease', 'deficiency', 'weed', 'others']
+
         self.setup_page1()
         self.root.bind("<Control-z>", self.undo_action)
         self.root.bind("<Control-y>", self.redo_action)
@@ -181,22 +182,21 @@ class AnnotationTool:
         project_folder_path = os.path.join(os.path.dirname(self.source_folder), "annotations.json")
         with open(project_folder_path, 'w') as f:
             json.dump(json_data, f, indent=4)
-    def load_stack(self, file_path):
-        if os.path.exists(file_path):
-            try:
-                with open(file_path, "r") as f:
+    def load_stack_file(self, filename):
+        if os.path.exists(filename):
+            with open(filename, 'r') as f:
+                try:
                     return json.load(f)
-            except Exception as e:
-                print(f"Error loading {file_path}: {e}")
-                return []
-        return []
+                except json.JSONDecodeError:
+                    return {}
+        return {}
 
-    def save_stack(self, file_path, stack):
-        try:
-            with open(file_path, "w") as f:
-                json.dump(stack, f)
-        except Exception as e:
-            print(f"Error saving {file_path}: {e}")
+
+
+    def save_stack_file(self, filename, stack_dict):
+        with open(filename, 'w') as f:
+            json.dump(stack_dict, f, indent=4)
+
 
     def load_annotations_from_json(self):
         self.annotations = {}  # Reset current annotations
@@ -248,6 +248,15 @@ class AnnotationTool:
         self.image_counter_label = ttk.Label(
         self.root
         )
+        self.folder_key = os.path.basename(self.source_folder)
+
+        # Load global stacks from JSON
+        self.undo_dict = self.load_stack_file(self.undo_file)
+        self.redo_dict = self.load_stack_file(self.redo_file)
+
+        # Load current folder's stack
+        self.undo_stack = self.undo_dict.get(self.folder_key, [])
+        self.redo_stack = self.redo_dict.get(self.folder_key, [])
         self.image_counter_label.pack(side="top", anchor="ne", pady=5) 
         back_btn = ttk.Button(self.root, text="🔙 Back", command=self.setup_page1)
         back_btn.pack(anchor='nw', padx=10, pady=10)
@@ -305,6 +314,7 @@ class AnnotationTool:
         # Right-side: stats
         self.stats_label = ttk.Label(nav_frame, text="", font=('Helvetica', 10, 'italic'))
         self.stats_label.pack(side=tk.RIGHT, padx=10)
+        
         self.root.bind("<Control-z>", self.undo_action)
         self.root.bind("<Control-y>", self.redo_action)
 
@@ -319,28 +329,7 @@ class AnnotationTool:
         self.root.protocol("WM_DELETE_WINDOW", self.on_exit)
         self.root.after(100, self.display_image)
         
-    def save_history_to_disk(self, action_type, image_index, image_path, bounding_box):
-        history_entry = {
-            str(image_index): {
-                "path": image_path.replace("\\", "/"),
-                "bounding_and_label": [
-                    bounding_box
-                ]
-            }
-        }
-
-        if action_type == "undo":
-            self.undo_stack.append(history_entry)
-        elif action_type == "redo":
-            self.redo_stack.append(history_entry)
-
-        # Optionally, persist history to disk
-        history_path = os.path.join(".history", "history.json")
-        with open(history_path, "w") as f:
-            json.dump({
-                "undo": self.undo_stack,
-                "redo": self.redo_stack
-            }, f, indent=4)
+    
     def zoom_with_mousewheel(self, event):
         if event.delta > 0:
             self.zoom_level *= 1.1  # Zoom in
@@ -367,16 +356,7 @@ class AnnotationTool:
                 self.annotations[filename] = updated_annots
                 self.display_image()
                 self.save_annotations_to_json()
-                self.save_history_to_disk("undo", self.current_image_index, filename, {
-                    "x0": x0,
-                    "y0": y0,
-                    "x1": x1,
-                    "y1": y1,
-                    "crop": crop,
-                    "category": category,
-                    "name": name,
-                    "stage": stage
-                })
+                
     def clear_current_annotations(self):
         if not self.display_image_list:
             return
@@ -486,7 +466,7 @@ class AnnotationTool:
             self.display_image()
 
     def on_press(self, event):
- 
+        
         self.unsaved_changes = True
         self.rect_start_canvas = (event.x, event.y)  # Store as-is for drawing
         self.current_rect = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='red')
@@ -565,8 +545,7 @@ class AnnotationTool:
         other_category_var = tk.StringVar()
 
         ttk.Label(popup1, text="Category:", background="#f7fbff", font=('Arial', 10, 'bold')).pack(anchor='w', padx=10)
-        categories = ['healthy','pest', 'disease', 'deficiency', 'weed', 'others']
-        sorted_categories = sorted([cat for cat in categories if cat.lower() != 'others']) + ['others']
+        sorted_categories = sorted([cat for cat in self.categories if cat.lower() != 'others']) + ['others']
 
         category_frame = tk.Frame(popup1, bg="#f7fbff")
         category_frame.pack(anchor='w', padx=20)
@@ -596,7 +575,9 @@ class AnnotationTool:
             crop = crop_entry.get().strip()
             category = category_var.get().strip()
             if category == 'others':
-                category = other_category_var.get().strip()
+                category = other_category_var.get().strip().lower()
+                if category and category not in self.categories:
+                    self.categories.append(category)
             if category == 'healthy':
                 name= stage = "Healthy"
             else:
@@ -638,8 +619,7 @@ class AnnotationTool:
                 }
                 self.undo_stack.append(action)
                 self.redo_stack.clear()
-                self.save_stack(self.undo_file, self.undo_stack)
-                self.save_stack(self.redo_file, self.redo_stack)
+                
 
                 self.save_annotations_to_json()
                 popup1.destroy()
@@ -744,8 +724,11 @@ class AnnotationTool:
                 if rect_id:
                     self.canvas.delete(rect_id)
 
-                self.save_stack(self.undo_file, self.undo_stack)
-                self.save_stack(self.redo_file, self.redo_stack)
+                # Save after modification
+                self.undo_dict[self.folder_key] = self.undo_stack
+                self.redo_dict[self.folder_key] = self.redo_stack
+                self.save_stack_file(self.undo_file, self.undo_dict)
+                self.save_stack_file(self.redo_file, self.redo_dict)
 
                 self.save_annotations_to_json()
                 popup2.destroy()
@@ -778,13 +761,14 @@ class AnnotationTool:
                         pass  # Already removed
 
                 self.save_annotations_to_json()
-                self.save_stack(self.undo_file, self.undo_stack)
-                self.save_stack(self.redo_file, self.redo_stack)
+                # Save after modification
+                self.undo_dict[self.folder_key] = self.undo_stack
+                self.redo_dict[self.folder_key] = self.redo_stack
+                self.save_stack_file(self.undo_file, self.undo_dict)
+                self.save_stack_file(self.redo_file, self.redo_dict)
                 self.display_image()
                 break
-
-        
-        
+    
     def redo_action(self, event=None):
         if not self.redo_stack:
             return
@@ -804,8 +788,11 @@ class AnnotationTool:
                 self.annotations[filename].extend(annotations_to_restore)
 
                 self.save_annotations_to_json()
-                self.save_stack(self.undo_file, self.undo_stack)
-                self.save_stack(self.redo_file, self.redo_stack)
+                # Save after modification
+                self.undo_dict[self.folder_key] = self.undo_stack
+                self.redo_dict[self.folder_key] = self.redo_stack
+                self.save_stack_file(self.undo_file, self.undo_dict)
+                self.save_stack_file(self.redo_file, self.redo_dict)
                 self.display_image()
                 break
 
@@ -820,7 +807,7 @@ class AnnotationTool:
         os.makedirs(".session", exist_ok=True)
         with open(".session/session.json", "w") as f:
             json.dump(session_data, f)
-
+        
         self.save_annotations_to_json()
         
         if messagebox.askyesno("Exit", "Do you want to save and exit the application?"):
