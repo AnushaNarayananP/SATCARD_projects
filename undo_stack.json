@@ -1,0 +1,19 @@
+{
+    "farm A": [
+        {
+            "filename": "healthy44_.jpg",
+            "annotation": [
+                84.0,
+                56.0,
+                356.0,
+                352.0,
+                "a",
+                "healthy",
+                "Healthy",
+                "Healthy"
+            ],
+            "source_image_path": "C:/Users/HP/Downloads/plant_1_2/farm A\\healthy44_.jpg",
+            "box_index": 0
+        }
+    ]
+}

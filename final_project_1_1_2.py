@@ -518,21 +518,33 @@ class AnnotationTool:
             self.display_image()
 
     def on_press(self, event):
+        # Ensure click is inside the displayed image area
+        img_width = int(self.current_image.width * self.zoom_level)
+        img_height = int(self.current_image.height * self.zoom_level)
         
-        self.unsaved_changes = True
-        self.rect_start_canvas = (event.x, event.y)  # Store as-is for drawing
-        self.current_rect = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='red')
-        self.last_drawn_rect = self.current_rect
+        if 0 <= event.x <= img_width and 0 <= event.y <= img_height:
+            self.unsaved_changes = True
+            self.rect_start_canvas = (event.x, event.y)
+            self.current_rect = self.canvas.create_rectangle(event.x, event.y, event.x, event.y, outline='red')
+            self.last_drawn_rect = self.current_rect
+        else:
+            self.rect_start_canvas = None
+            self.current_rect = None
+
 
     def on_drag(self, event):
         if self.current_rect and self.rect_start_canvas:
             x0, y0 = self.rect_start_canvas
-            x1, y1 = event.x, event.y
+            x1 = min(max(event.x, 0), self.tk_image.width())   # clip to canvas width
+            y1 = min(max(event.y, 0), self.tk_image.height())  # clip to canvas height
             self.canvas.coords(self.current_rect, x0, y0, x1, y1)
+
     def on_release(self, event):
         if self.rect_start_canvas:
             x0_canvas, y0_canvas = self.rect_start_canvas
-            x1_canvas, y1_canvas = event.x, event.y
+            # Clip end coordinates to canvas/image bounds
+            x1_canvas = min(max(event.x, 0), self.tk_image.width())
+            y1_canvas = min(max(event.y, 0), self.tk_image.height())
 
             # Convert back to image coordinates (not canvas)
             x0_img = x0_canvas / self.zoom_level
@@ -564,6 +576,11 @@ class AnnotationTool:
         
         # Popup Step 1: Crop, Category, Name
         popup1 = tk.Toplevel(self.root)
+        popup1.transient(self.root)
+        popup1.grab_set()
+        popup1.focus_force()
+        popup1.lift()
+
         popup1.title("📝 Annotation - Step 1")
         popup1.configure(bg="#f7fbff")
 
@@ -681,6 +698,10 @@ class AnnotationTool:
             
             # Popup Step 2: Stage
             popup2 = tk.Toplevel(self.root)
+            popup2.transient(self.root)
+            popup2.grab_set()
+            popup2.focus_force()
+            popup2.lift()
             popup2.title("📝 Annotation - Step 2: Stage")
             popup2.configure(bg="#f7fbff")
             
