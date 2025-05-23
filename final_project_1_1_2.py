@@ -44,8 +44,8 @@ class AutoCompleteEntry(tk.Entry):
         for match in matches:
             self.listbox.insert(tk.END, match)
 
-        self.listbox.place(x=self.winfo_rootx() - self.master.winfo_rootx(),
-                           y=self.winfo_rooty() - self.master.winfo_rooty() + self.winfo_height(),
+        self.listbox.place(x= self.winfo_rootx() - self.master.winfo_rootx(),
+                           y= self.winfo_rooty() - self.master.winfo_rooty() + self.winfo_height(),
                            width=self.winfo_width())
 
     def hide_listbox(self):
@@ -146,24 +146,36 @@ class AnnotationTool:
         
         
     def save_annotations_to_json(self):
-        
-        json_data = {}
-        image_index = 1
-        box_index = 1
+        project_folder_path = os.path.join(os.path.dirname(self.source_folder), "annotations.json")
+
+        # Load existing annotations if available
+        if os.path.exists(project_folder_path):
+            with open(project_folder_path, 'r') as f:
+                try:
+                    json_data = json.load(f)
+                except json.JSONDecodeError:
+                    json_data = {}
+        else:
+            json_data = {}
+
+        # Get the next available image index by checking existing keys
+        existing_indices = [int(k) for k in json_data.keys()]
+        image_index = max(existing_indices) + 1 if existing_indices else 1
+        box_index = 1  # Global box index
 
         final_folder_name = os.path.basename(self.source_folder)
 
         for filename in sorted(self.annotations.keys()):
             # Build custom image path
             rel_path = os.path.join("Project_Folder", final_folder_name, filename).replace("\\", "/")
-            json_data[str(image_index)] = {
+            image_entry = {
                 "path": rel_path,
                 "bounding_and_label": []
             }
 
             for ann in self.annotations[filename]:
                 x0, y0, x1, y1, crop, category, name, stage = ann
-                json_data[str(image_index)]["bounding_and_label"].append({
+                image_entry["bounding_and_label"].append({
                     "index": box_index,
                     "x0": x0,
                     "y0": y0,
@@ -176,12 +188,14 @@ class AnnotationTool:
                 })
                 box_index += 1
 
+            json_data[str(image_index)] = image_entry
             image_index += 1
 
-        # Save JSON in the parent directory of the Project_Folder
-        project_folder_path = os.path.join(os.path.dirname(self.source_folder), "annotations.json")
+        # Save the merged annotations
         with open(project_folder_path, 'w') as f:
             json.dump(json_data, f, indent=4)
+
+            
     def load_stack_file(self, filename):
         if os.path.exists(filename):
             with open(filename, 'r') as f:
@@ -217,7 +231,7 @@ class AnnotationTool:
 
             with open(json_path, 'r') as f:
                 json_data = json.load(f)
-
+            
             # Compare final folder name to ensure it's for the correct project
             final_folder_name = os.path.basename(self.source_folder)
 
@@ -258,7 +272,7 @@ class AnnotationTool:
         self.undo_stack = self.undo_dict.get(self.folder_key, [])
         self.redo_stack = self.redo_dict.get(self.folder_key, [])
         self.image_counter_label.pack(side="top", anchor="ne", pady=5) 
-        back_btn = ttk.Button(self.root, text="🔙 Back", command=self.setup_page1)
+        back_btn = ttk.Button(self.root, text="🔙 Back", command=self.back_to_page1)
         back_btn.pack(anchor='nw', padx=10, pady=10)
         # Preserve paths in case user returns
         self.selected_source_folder = self.source_folder
@@ -320,15 +334,42 @@ class AnnotationTool:
 
         # Load last index if exists
         session_path = os.path.join(".session", "session.json")
+        folder_key = os.path.basename(self.source_folder)
+        self.current_image_index = 0  # Default
+
+        if os.path.exists(session_path):
+            try:
+                with open(session_path, "r") as f:
+                    session_data = json.load(f)
+                    self.current_image_index = session_data.get(folder_key, 0)
+            except json.JSONDecodeError:
+                self.current_image_index = 0
+        
+        self.display_image()
+                
+    def back_to_page1(self):
+        self.save_annotations_to_json()  # Save annotations before leaving
+        # Save current image index to session file
+        folder_key = os.path.basename(self.selected_source_folder)
+        session_path = os.path.join(".session", "session.json")
+        os.makedirs(".session", exist_ok=True)
+
+        session_data = {}
         if os.path.exists(session_path):
             with open(session_path, "r") as f:
-                session_data = json.load(f)
-                self.current_image_index = session_data.get("last_index", 0)
-        else:
-            self.current_image_index = 0  # Default to first image
-        self.root.protocol("WM_DELETE_WINDOW", self.on_exit)
-        self.root.after(100, self.display_image)
-        
+                try:
+                    session_data = json.load(f)
+                except json.JSONDecodeError:
+                    session_data = {}
+
+        session_data[folder_key] = self.current_image_index
+
+        with open(session_path, "w") as f:
+            json.dump(session_data, f, indent=2)
+
+        self.setup_page1()
+
+    
     
     def zoom_with_mousewheel(self, event):
         if event.delta > 0:
@@ -399,6 +440,17 @@ class AnnotationTool:
             messagebox.showerror("Error", "Please select source  folders.")
             return
         self.source_folder = self.selected_source_folder
+        self.folder_key = os.path.basename(self.source_folder)
+
+        # Load undo/redo stacks from JSON file
+        self.undo_dict = self.load_stack_file(self.undo_file)
+        self.redo_dict = self.load_stack_file(self.redo_file)
+
+        # Get stacks for current folder
+        self.undo_stack = self.undo_dict.get(self.folder_key, [])
+        self.redo_stack = self.redo_dict.get(self.folder_key, [])
+
+        
         self.setup_page2()
 
     def display_image(self):
@@ -797,24 +849,36 @@ class AnnotationTool:
                 break
 
 
-    def on_exit(self):
+    def on_exit(self): 
         if not self.selected_source_folder:
             self.root.destroy()
             return
-        session_data = {
-            "last_index": self.current_image_index
-        }
+
+        folder_key = os.path.basename(self.selected_source_folder)
         os.makedirs(".session", exist_ok=True)
-        with open(".session/session.json", "w") as f:
-            json.dump(session_data, f)
-        
+        session_path = os.path.join(".session", "session.json")
+
+        session_data = {}
+        if os.path.exists(session_path):
+            with open(session_path, "r") as f:
+                try:
+                    session_data = json.load(f)
+                except json.JSONDecodeError:
+                    session_data = {}
+
+        session_data[folder_key] = self.current_image_index
+
+        with open(session_path, "w") as f:
+            json.dump(session_data, f, indent=2)
+
         self.save_annotations_to_json()
-        
+
         if messagebox.askyesno("Exit", "Do you want to save and exit the application?"):
             self.save_annotations_to_json()
             self.root.destroy()
         else:
             return
+
         
 
 
